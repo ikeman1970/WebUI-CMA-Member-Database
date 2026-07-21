@@ -27,56 +27,62 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
   // For production, check if admin accounts exist and block bootstrap
   // For dev/test (NODE_ENV !== 'production'), allow bootstrap anytime for testing
   if (process.env.NODE_ENV === 'production') {
-    const existingAdmin = await prisma.account.findFirst({
-      where: {
-        OR: [
-          { role: { equals: 'root', mode: 'insensitive' } },
-          { role: { equals: 'superuser', mode: 'insensitive' } },
-          { role: { equals: 'admin', mode: 'insensitive' } }
-        ]
-      }
-    });
+    const existingAdmins = await prisma.$queryRaw`
+      SELECT id FROM app."Account" 
+      WHERE "role" IN ('root', 'superuser', 'admin')
+      LIMIT 1
+    ` as any[];
 
-    if (existingAdmin) {
+    if (existingAdmins?.length > 0) {
       return null;
     }
   }
 
-  const account = await prisma.account.findFirst({
-    where: {
-      OR: [{ email: bootstrapEmail }, { username: bootstrapUsername }]
-    }
-  });
+  // Look up or create account using raw SQL to bypass RLS
+  const existingAccounts = await prisma.$queryRaw`
+    SELECT * FROM app."Account" 
+    WHERE "email" = ${bootstrapEmail} OR "username" = ${bootstrapUsername}
+    LIMIT 1
+  ` as any[];
+  
+  let account = existingAccounts?.[0];
 
-  const resolvedAccount = account
-    ? await prisma.account.update({
-        where: { id: account.id },
-        data: {
-          email: bootstrapEmail,
-          username: bootstrapUsername,
-          role: 'root',
-          accountType: 'internal',
-          scopeType: 'global',
-          type: 'admin',
-          mustChangePassword: false,
-          isDisabled: false
-        }
-      })
-    : await prisma.account.create({
-        data: {
-          email: bootstrapEmail,
-          username: bootstrapUsername,
-          role: 'root',
-          accountType: 'internal',
-          scopeType: 'global',
-          type: 'admin',
-          mustChangePassword: false,
-          isDisabled: false
-        }
-      });
+  if (account) {
+    // Update existing account
+    await prisma.$executeRawUnsafe(
+      `UPDATE app."Account" SET "role" = ?, "accountType" = ?, "scopeType" = ?, "type" = ?, "mustChangePassword" = ?, "isDisabled" = ? WHERE "id" = ?`,
+      'root',
+      'internal',
+      'global',
+      'admin',
+      false,
+      false,
+      account.id
+    );
+  } else {
+    // Create new account using raw SQL to bypass RLS
+    const newId = require('crypto').randomUUID();
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO app."Account" (id, email, username, role, "accountType", "scopeType", "type", "mustChangePassword", "isDisabled", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      newId,
+      bootstrapEmail,
+      bootstrapUsername,
+      'root',
+      'internal',
+      'global',
+      'admin',
+      false,
+      false,
+      new Date(),
+      new Date()
+    );
+    account = { id: newId, email: bootstrapEmail, username: bootstrapUsername };
+  }
 
+  // Ensure Supabase auth user exists
   await ensureBootstrapAuthUser(bootstrapEmail, bootstrapPassword);
-  return resolvedAccount;
+  
+  return account;
 }
 
 async function ensureBootstrapAuthUser(email: string, password: string) {
@@ -207,10 +213,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Now set RLS context with the correct Account ID
   await setRLSContext(account.id);
-
-  if (!account) {
-    return res.status(401).json({ message: 'Account not found.' });
-  }
 
   if (account.isDisabled) {
     return res.status(403).json({ message: 'Account is disabled. Contact an administrator.' });
