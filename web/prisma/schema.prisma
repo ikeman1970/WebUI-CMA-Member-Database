@@ -1,0 +1,544 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Account {
+  id            String   @id @default(uuid())
+  createdAt     DateTime @default(now())
+  lastLoginAt   DateTime?
+  lastPasswordChangeAt DateTime? @map("last_password_change_at")
+  email         String?
+  username      String?
+  appleUserId   String?
+  authUserId    String?  @map("auth_user_id")
+  accountType   String?
+  role          String?
+  scopeType     String?
+  type          String?
+  themePreference String? @default("dark") @map("theme_preference")
+  isDisabled    Boolean  @default(false)
+  mustChangePassword Boolean @default(false) @map("must_change_password")
+  passwordHash  String?
+  passwordSalt  String?
+  chapterId     String?  @map("chapter_id")
+  orgUnitId     String?  @map("orgunit_id")
+  personId      String?  @map("person_id")
+
+  chapter   Chapter? @relation(fields: [chapterId], references: [id])
+  orgUnit   OrgUnit? @relation(fields: [orgUnitId], references: [id])
+  person    Person?  @relation(fields: [personId], references: [id])
+  sessions Session[]
+  chapterStatusTransitions ChapterStatusTransition[] @relation("ChapterStatusChangedBy")
+  importedReportingSnapshots ChapterReportingSnapshot[] @relation("ReportingImportedBy")
+  createdChapterEvents ChapterEvent[] @relation("ChapterEventCreatedBy")
+  inviteTokens AccountInviteToken[]
+  recordedMeetings ChapterMeeting[] @relation("ChapterMeetingRecordedBy")
+  recordedBackPatchStatuses MemberBackPatchStatus[] @relation("BackPatchRecordedBy")
+  recordedContributions MemberContribution[] @relation("ContributionRecordedBy")
+  recordedTrainingCompletions MemberTrainingCompletion[] @relation("TrainingRecordedBy")
+  rolePermissionUpdates RolePermission[] @relation("PermissionUpdatedBy")
+}
+
+model AccountInviteToken {
+  id                String   @id @default(uuid())
+  tokenHash         String   @unique @map("token_hash")
+  accountId         String   @map("account_id")
+  personId          String?  @map("person_id")
+  inviteEmail       String   @map("invite_email")
+  createdAt         DateTime @default(now()) @map("created_at")
+  expiresAt         DateTime @map("expires_at")
+  usedAt            DateTime? @map("used_at")
+  createdByAccountId String? @map("created_by_account_id")
+
+  account           Account  @relation(fields: [accountId], references: [id])
+  person            Person?  @relation(fields: [personId], references: [id])
+
+  @@index([accountId, expiresAt])
+  @@index([personId])
+  @@map("account_invite_tokens")
+}
+
+model Chapter {
+  id            String    @id @default(uuid())
+  name          String?
+  number        String?
+  city          String?
+  state         String?
+  status        String?
+  country       String?
+  region        Int?
+  createdAt     DateTime? @default(now())
+  updatedAt     DateTime? @updatedAt
+
+  orgUnit       OrgUnit?      @relation(fields: [orgUnitId], references: [id])
+  orgUnitId     String?
+  accounts      Account[]
+  assignments   OfficerAssignment[]
+  people        Person[]
+  roleNotes     RoleNote[]
+  statusTransitions ChapterStatusTransition[]
+  reportingSnapshots ChapterReportingSnapshot[]
+  events ChapterEvent[]
+  eligibilityConfig EligibilityConfig?
+  meetings      ChapterMeeting[]
+  backPatchStatuses MemberBackPatchStatus[]
+  contributions MemberContribution[]
+  eligibilityStatuses MemberEligibilityStatus[]
+}
+
+model ChapterEvent {
+  id                String   @id @default(uuid())
+  chapterId         String   @map("chapter_id")
+  title             String
+  eventDate         DateTime @map("event_date")
+  eventType         String   @default("fellowship") @map("event_type")
+  entryMode         String   @default("pre") @map("entry_mode")
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdByAccountId String?  @map("created_by_account_id")
+
+  chapter           Chapter  @relation(fields: [chapterId], references: [id])
+  createdByAccount   Account? @relation("ChapterEventCreatedBy", fields: [createdByAccountId], references: [id])
+  attendees         ChapterEventAttendee[]
+  followUps         ChapterEventFollowUp[]
+
+  @@index([chapterId, eventDate])
+  @@index([createdByAccountId])
+  @@map("chapter_events")
+}
+
+model ChapterEventAttendee {
+  id                String   @id @default(uuid())
+  eventId           String   @map("event_id")
+  attendeeType      String   @map("attendee_type")
+  personId          String?  @map("person_id")
+  attendeeName      String?  @map("attendee_name")
+  attendeeCmaNumber String?  @map("attendee_cma_number")
+  creditedPersonId  String?  @map("credited_person_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  event             ChapterEvent @relation(fields: [eventId], references: [id])
+  person            Person?      @relation("EventAttendancePerson", fields: [personId], references: [id])
+  creditedPerson    Person?      @relation("EventAttendanceCreditedTo", fields: [creditedPersonId], references: [id])
+  followUps         ChapterEventFollowUp[]
+
+  @@index([eventId])
+  @@index([personId])
+  @@index([creditedPersonId])
+  @@map("chapter_event_attendees")
+}
+
+model ChapterEventFollowUp {
+  id             String   @id @default(uuid())
+  eventId        String   @map("event_id")
+  attendeeId     String?  @map("attendee_id")
+  personId       String?  @map("person_id")
+  followUpScope  String   @map("follow_up_scope")
+  message        String
+  createdAt      DateTime @default(now()) @map("created_at")
+  resolvedAt     DateTime? @map("resolved_at")
+
+  event          ChapterEvent       @relation(fields: [eventId], references: [id])
+  attendee       ChapterEventAttendee? @relation(fields: [attendeeId], references: [id])
+  person         Person?           @relation(fields: [personId], references: [id])
+
+  @@index([eventId])
+  @@index([followUpScope, createdAt])
+  @@map("chapter_event_follow_ups")
+}
+
+model ChapterReportingSnapshot {
+  id                 String   @id @default(uuid())
+  chapterId          String   @map("chapter_id")
+  reportMonth        DateTime @map("report_month")
+  metrics            Json
+  changeHistory      Json?    @map("change_history")
+  sourceFileName     String?  @map("source_file_name")
+  importedAt         DateTime @default(now()) @map("imported_at")
+  importedByAccountId String? @map("imported_by_account_id")
+
+  chapter            Chapter  @relation(fields: [chapterId], references: [id])
+  importedByAccount  Account? @relation("ReportingImportedBy", fields: [importedByAccountId], references: [id])
+
+  @@unique([chapterId, reportMonth])
+  @@index([reportMonth])
+  @@index([importedByAccountId])
+  @@map("chapter_reporting_snapshots")
+}
+
+model ChapterStatusTransition {
+  id               String   @id @default(uuid())
+  chapterId        String   @map("chapter_id")
+  fromStatus       String?  @map("from_status")
+  toStatus         String   @map("to_status")
+  changedAt        DateTime @default(now()) @map("changed_at")
+  changedByAccountId String? @map("changed_by_account_id")
+  reason           String?
+
+  chapter          Chapter  @relation(fields: [chapterId], references: [id])
+  changedByAccount Account? @relation("ChapterStatusChangedBy", fields: [changedByAccountId], references: [id])
+
+  @@index([chapterId, changedAt])
+  @@index([changedByAccountId])
+  @@map("chapter_status_transitions")
+}
+
+model Person {
+  id                    String            @id @default(uuid())
+  createdAt             DateTime?         @default(now())
+  updatedAt             DateTime?         @updatedAt
+  emailHome             String?
+  emailWork             String?
+  firstName             String?
+  lastName              String?
+  phone1                String?
+  phone2                String?
+  hasMotorcycleInsurance Boolean         @default(false)
+  status                String?
+  statusEffectiveDate   DateTime?
+  cmaNumber             String?
+  address1              String?
+  address2              String?
+  city                  String?
+  state                 String?
+  zipCode               String?
+  country               String?
+  birthday              DateTime?
+  anniversary           DateTime?
+  spouseName            String?
+  spouseCmaNumber       String?
+  spouseCellPhone       String?
+  spouseEmail           String?
+  childrenNames         String?
+  grandchildrenNames     String?
+  memberSinceYear       Int?
+  spouseMemberSinceYear Int?
+  yearsInChapter        String?
+  spouseYearsInChapter  String?
+  milesToMeetings       String?
+  churchName            String?
+  activeInMinistry      Boolean           @default(false)
+  ministryHow           String?
+  wantsEventContact     Boolean           @default(false)
+  willingHostBibleStudy Boolean           @default(false)
+  willingHostFellowship Boolean           @default(false)
+  willingPrayerLineEmail Boolean          @default(false)
+  willingRunForSonHelp  Boolean           @default(false)
+  belongsOtherMotoOrg   Boolean           @default(false)
+  holdsOfficeOtherOrgs  Boolean           @default(false)
+  yearsRidingSelf       String?
+  msfCourseSelf         Boolean           @default(false)
+  yearsRidingSpouse     String?
+  msfCourseSpouse       Boolean           @default(false)
+  comments              String?
+  rescueEquipment       String?
+  lodging               String?
+  directoryShareHiddenFields Json?
+  chapterId             String?           @map("chapter_id")
+  orgUnitId             String?           @map("orgunit_id")
+  spouseId              String?           @map("spouse_id") @unique
+
+  chapter               Chapter?          @relation(fields: [chapterId], references: [id])
+  orgUnit               OrgUnit?          @relation(fields: [orgUnitId], references: [id])
+  spouse                Person?           @relation("SpouseRelation", fields: [spouseId], references: [id])
+  spouseOf              Person?           @relation("SpouseRelation")
+  accounts              Account[]
+  motorcycles           Motorcycle[]
+  officerAssignments    OfficerAssignment[]
+  roleNotes             RoleNote[]
+  emergencyContacts     EmergencyContact[]
+  eventAttendances      ChapterEventAttendee[] @relation("EventAttendancePerson")
+  creditedEventAttendances ChapterEventAttendee[] @relation("EventAttendanceCreditedTo")
+  eventFollowUps        ChapterEventFollowUp[]
+  inviteTokens          AccountInviteToken[]
+  meetingAttendances    ChapterMeetingAttendance[]
+  backPatchStatuses     MemberBackPatchStatus[]
+  contributions         MemberContribution[]
+  trainingCompletions   MemberTrainingCompletion[]
+  eligibilityStatuses   MemberEligibilityStatus[]
+}
+
+model AppSetting {
+  key       String   @id
+  value     Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrgUnit {
+  id          String             @id @default(uuid())
+  code        String?
+  name        String?
+  type        String?
+  createdAt   DateTime?          @default(now())
+  parentId    String?            @map("parent_id")
+
+  parent      OrgUnit?           @relation("OrgUnitChildren", fields: [parentId], references: [id])
+  children    OrgUnit[]          @relation("OrgUnitChildren")
+  accounts    Account[]
+  assignments OfficerAssignment[]
+  people      Person[]
+  chapters    Chapter[]
+}
+
+model OfficerAssignment {
+  id                String   @id @default(uuid())
+  role              String?
+  startDate         DateTime?
+  endDate           DateTime?
+  transitionEnabled Boolean  @default(false)
+  transitionEndsAt  DateTime?
+  personId          String?  @map("person_id")
+  orgUnitId         String?  @map("orgunit_id")
+  chapterId         String?  @map("chapter_id")
+
+  person   Person?  @relation(fields: [personId], references: [id])
+  orgUnit  OrgUnit? @relation(fields: [orgUnitId], references: [id])
+  chapter  Chapter? @relation(fields: [chapterId], references: [id])
+}
+
+model Motorcycle {
+  id        String   @id @default(uuid())
+  createdAt DateTime? @default(now())
+  make      String?
+  model     String?
+  color     String?
+  year      Int?
+  ownerId   String?  @map("owner_id")
+
+  owner Person? @relation(fields: [ownerId], references: [id])
+}
+
+model RoleNote {
+  id        String   @id @default(uuid())
+  note      String?
+  personId  String?  @map("person_id")
+  chapterId String?  @map("chapter_id")
+
+  person   Person?  @relation(fields: [personId], references: [id])
+  chapter  Chapter? @relation(fields: [chapterId], references: [id])
+}
+
+model EmergencyContact {
+  id       String   @id @default(uuid())
+  name     String?
+  relationship String?
+  phone    String?
+  notes    String?
+  personId String?  @map("person_id")
+
+  person Person? @relation(fields: [personId], references: [id])
+}
+
+// ============================================================================
+// MEMBER ELIGIBILITY TRACKING
+// ============================================================================
+
+model EligibilityConfig {
+  id String @id @default(uuid())
+  chapterId String? @unique @map("chapter_id")
+
+  // Feature flags
+  trackMeetingAttendance Boolean @default(true) @map("track_meeting_attendance")
+  trackBackPatchStatus Boolean @default(true) @map("track_back_patch_status")
+  trackDonations Boolean @default(true) @map("track_donations")
+  trackMemberTraining Boolean @default(false) @map("track_member_training")
+
+  // Configurable thresholds
+  meetingsRequiredPerPeriod Int @default(3) @map("meetings_required_per_period")
+  meetingTrackingPeriodMonths Int @default(6) @map("meeting_tracking_period_months")
+  backPatchRequiredMonths Int @default(6) @map("back_patch_required_months")
+  minimumAgeForVoting Int @default(18) @map("minimum_age_for_voting")
+  minimumAgeForNomination Int @default(18) @map("minimum_age_for_nomination")
+  minimumChapterMembershipMonths Int @default(6) @map("minimum_chapter_membership_months")
+
+  // Donation config
+  trackRfsDonations Boolean @default(true) @map("track_rfs_donations")
+  trackGoodiesPurchases Boolean @default(true) @map("track_goodies_purchases")
+  trackNationalDonations Boolean @default(true) @map("track_national_donations")
+  minimumDonationAmount Decimal @default(20.00) @map("minimum_donation_amount") @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  chapter Chapter? @relation(fields: [chapterId], references: [id])
+
+  @@map("eligibility_config")
+}
+
+model DonationCycle {
+  id String @id @default(uuid())
+  cycleName String @map("cycle_name")
+  cycleType String @default("annual") @map("cycle_type")
+  startMonth Int @map("start_month")
+  startDay Int @default(1) @map("start_day")
+  endMonth Int @map("end_month")
+  endDay Int @default(1) @map("end_day")
+  description String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  contributions MemberContribution[]
+
+  @@unique([cycleName, cycleType])
+  @@map("donation_cycle")
+}
+
+model ChapterMeeting {
+  id String @id @default(uuid())
+  chapterId String @map("chapter_id")
+  meetingDate DateTime @map("meeting_date")
+  meetingTitle String? @map("meeting_title")
+  meetingType String @default("regular") @map("meeting_type")
+  notes String?
+  recordedBy String? @map("recorded_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  chapter Chapter @relation(fields: [chapterId], references: [id])
+  recordedByAccount Account? @relation("ChapterMeetingRecordedBy", fields: [recordedBy], references: [id])
+  attendances ChapterMeetingAttendance[]
+
+  @@unique([chapterId, meetingDate])
+  @@map("chapter_meeting")
+}
+
+model ChapterMeetingAttendance {
+  id String @id @default(uuid())
+  meetingId String @map("meeting_id")
+  personId String @map("person_id")
+  attended Boolean @default(true)
+  notes String?
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  meeting ChapterMeeting @relation(fields: [meetingId], references: [id])
+  person Person @relation(fields: [personId], references: [id])
+
+  @@unique([meetingId, personId])
+  @@map("chapter_meeting_attendance")
+}
+
+model MemberBackPatchStatus {
+  id String @id @default(uuid())
+  personId String @map("person_id")
+  chapterId String @map("chapter_id")
+  patchType String @map("patch_type")
+  startDate DateTime @map("start_date")
+  endDate DateTime? @map("end_date")
+  notes String?
+  recordedBy String? @map("recorded_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  person Person @relation(fields: [personId], references: [id])
+  chapter Chapter @relation(fields: [chapterId], references: [id])
+  recordedByAccount Account? @relation("BackPatchRecordedBy", fields: [recordedBy], references: [id])
+
+  @@unique([personId, chapterId, startDate])
+  @@map("member_back_patch_status")
+}
+
+model MemberContribution {
+  id String @id @default(uuid())
+  personId String @map("person_id")
+  chapterId String? @map("chapter_id")
+  contributionType String @map("contribution_type")
+  donationCycleId String? @map("donation_cycle_id")
+  amount Decimal @db.Decimal(10, 2)
+  contributionDate DateTime @map("contribution_date")
+  description String?
+  recordedBy String? @map("recorded_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  person Person @relation(fields: [personId], references: [id])
+  chapter Chapter? @relation(fields: [chapterId], references: [id])
+  donationCycle DonationCycle? @relation(fields: [donationCycleId], references: [id])
+  recordedByAccount Account? @relation("ContributionRecordedBy", fields: [recordedBy], references: [id])
+
+  @@unique([personId, contributionType, contributionDate, amount])
+  @@map("member_contribution")
+}
+
+model MemberTrainingCompletion {
+  id String @id @default(uuid())
+  personId String @map("person_id")
+  trainingType String @map("training_type")
+  completionDate DateTime @map("completion_date")
+  completionSource String @default("chapter") @map("completion_source")
+  notes String?
+  recordedBy String? @map("recorded_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  person Person @relation(fields: [personId], references: [id])
+  recordedByAccount Account? @relation("TrainingRecordedBy", fields: [recordedBy], references: [id])
+
+  @@unique([personId, trainingType, completionDate])
+  @@map("member_training_completion")
+}
+
+model MemberEligibilityStatus {
+  id String @id @default(uuid())
+  personId String @map("person_id")
+  chapterId String @map("chapter_id")
+
+  // National membership
+  isNationalMember Boolean @default(false) @map("is_national_member")
+  nationalMemberUntil DateTime? @map("national_member_until")
+
+  // Chapter eligibility
+  isEligibleToVote Boolean @default(false) @map("is_eligible_to_vote")
+  isEligibleToNominate Boolean @default(false) @map("is_eligible_to_nominate")
+  isEligibleToHoldOffice Boolean @default(false) @map("is_eligible_to_hold_office")
+
+  // Eligibility details
+  meetsAgeRequirement Boolean @default(false) @map("meets_age_requirement")
+  meetsMembershipDuration Boolean @default(false) @map("meets_membership_duration")
+  meetsAttendanceRequirement Boolean @default(false) @map("meets_attendance_requirement")
+  meetsPatchRequirement Boolean @default(false) @map("meets_patch_requirement")
+
+  // Warnings
+  warningLowAttendance Boolean @default(false) @map("warning_low_attendance")
+  warningPatchStatus Boolean @default(false) @map("warning_patch_status")
+  warningAgeIneligible Boolean @default(false) @map("warning_age_ineligible")
+  warningMembershipTooRecent Boolean @default(false) @map("warning_membership_too_recent")
+
+  lastCalculatedAt DateTime @default(now()) @map("last_calculated_at")
+
+  person Person @relation(fields: [personId], references: [id])
+  chapter Chapter @relation(fields: [chapterId], references: [id])
+
+  @@unique([personId, chapterId])
+  @@map("member_eligibility_status")
+}
+
+// ============================================================================
+// ROLE PERMISSION MANAGEMENT
+// ============================================================================
+
+model RolePermission {
+  id String @id @default(uuid())
+  role String @unique
+  permissions String[] @default([])
+  description String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String? @map("updated_by")
+
+  updatedByAccount Account? @relation("PermissionUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("role_permission")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  accountId String
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id])
+}

@@ -1,0 +1,41 @@
+{
+  "name": "cma-member-database-web",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next start -p 3000",
+    "dev:auto": "if [ -f .next/BUILD_ID ]; then next start -p 3000; else npm run build && next start -p 3000; fi",
+    "dev:rebuild": "npm run build && next start -p 3000",
+    "dev:fresh": "pkill -f 'next start|next dev' || true; lsof -ti tcp:3000 | xargs kill -9 2>/dev/null || true; rm -rf .next; npm run build && next start -p 3000",
+    "dev:hot": "next dev --turbo",
+    "demo": "npm run build && next start -p 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "demo:doctor": "node scripts/local_demo_doctor.js",
+    "demo:audit": "node scripts/demo_data_audit.js",
+    "demo:seed-accounts": "node scripts/demo_seed_accounts.js",
+    "demo:prep": "npm run demo:doctor && npm run demo:seed-accounts && npm run demo:audit",
+    "demo:interactive": "npm run demo:prep && npm run dev:hot"
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0",
+    "@supabase/supabase-js": "2.29.0",
+    "next": "14.2.35",
+    "prisma": "5.22.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "^3.9.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.1",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "eslint": "8.56.0",
+    "eslint-config-next": "14.2.35",
+    "typescript": "5.5.4"
+  }
+}
