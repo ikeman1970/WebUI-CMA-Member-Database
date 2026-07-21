@@ -215,11 +215,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Query Account by email - bypassing RLS for login (use raw SQL)
     console.log('[LOGIN] Looking up Account record...');
-    const accounts = await prisma.$queryRaw`
-      SELECT * FROM app."Account" 
-      WHERE "email" = ${supabaseUser.email}
-      LIMIT 1
-    ` as any[];
+    const accounts = await prisma.$queryRawUnsafe(
+      `SELECT * FROM app."Account" WHERE "email" = $1 LIMIT 1`,
+      supabaseUser.email
+    ) as any[];
     let account = accounts?.[0] || null;
 
     console.log('[LOGIN] Account lookup result:', account ? `Found: ${account.id}` : 'Not found');
