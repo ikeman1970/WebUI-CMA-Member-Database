@@ -213,16 +213,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log('[LOGIN] Supabase user ID:', supabaseUser.id, 'Email:', supabaseUser.email);
 
-    // Query Account by email or username - bypassing RLS for login (use raw SQL)
+    // Query Account by email - bypassing RLS for login (use raw SQL)
     console.log('[LOGIN] Looking up Account record...');
     const accounts = await prisma.$queryRaw`
       SELECT * FROM app."Account" 
-      WHERE "email" = ${supabaseUser.email} OR "username" = ${usernameOrEmail}
+      WHERE "email" = ${supabaseUser.email}
       LIMIT 1
     ` as any[];
-    const account = accounts?.[0] || null;
+    let account = accounts?.[0] || null;
 
     console.log('[LOGIN] Account lookup result:', account ? `Found: ${account.id}` : 'Not found');
+
+    // If account doesn't exist, check if this is the bootstrap email and create it
+    if (!account && supabaseUser.email === process.env.BOOTSTRAP_ROOT_EMAIL) {
+      console.log('[LOGIN] Account not found but Supabase user exists for bootstrap email - creating Account record');
+      const newId = require('crypto').randomUUID();
+      
+      try {
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO app."Account" (id, email, username, role, "accountType", "scopeType", "type", "mustChangePassword", "isDisabled", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          newId,
+          process.env.BOOTSTRAP_ROOT_EMAIL,
+          process.env.BOOTSTRAP_ROOT_USERNAME ?? 'root',
+          'root',
+          'internal',
+          'global',
+          'admin',
+          false,
+          false,
+          new Date(),
+          new Date()
+        );
+        console.log('[LOGIN] Account record created for bootstrap email');
+        account = { 
+          id: newId, 
+          email: process.env.BOOTSTRAP_ROOT_EMAIL, 
+          username: process.env.BOOTSTRAP_ROOT_USERNAME ?? 'root',
+          role: 'root'
+        };
+      } catch (createError) {
+        console.error('[LOGIN] Failed to create Account record:', createError instanceof Error ? createError.message : String(createError));
+        return res.status(500).json({ message: 'Account setup failed' });
+      }
+    }
 
     if (!account) {
       return res.status(401).json({ message: 'Account not found.' });
