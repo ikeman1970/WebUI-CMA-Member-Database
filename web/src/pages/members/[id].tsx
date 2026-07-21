@@ -406,9 +406,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     };
   }
 
-  const configSetting = await (prisma as typeof prisma & {
-    appSetting?: { findUnique: (args: { where: { key: string } }) => Promise<{ value: unknown } | null> };
-  }).appSetting?.findUnique({ where: { key: 'memberDirectorySharing' } });
+  const configSetting = await (prisma.appSetting as any)?.findUnique({ where: { key: 'memberDirectorySharing' } }) || null;
 
   const publicMember = member
     ? buildPublicDirectoryMember(member as Record<string, unknown>, normalizeMemberDirectoryConfig(configSetting?.value))
