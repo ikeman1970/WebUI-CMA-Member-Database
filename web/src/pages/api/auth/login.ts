@@ -31,24 +31,9 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
     return null;
   }
 
-  // For production, check if admin accounts exist and block bootstrap
-  // For dev/test (NODE_ENV !== 'production'), allow bootstrap anytime for testing
-  if (process.env.NODE_ENV === 'production') {
-    console.log('[BOOTSTRAP] Production mode - checking for existing admins');
-    const existingAdmins = await prisma.$queryRaw`
-      SELECT id FROM app."Account" 
-      WHERE "role" IN ('root', 'superuser', 'admin')
-      LIMIT 1
-    ` as any[];
-
-    if (existingAdmins?.length > 0) {
-      console.log('[BOOTSTRAP] Admin already exists, blocking bootstrap');
-      return null;
-    }
-    console.log('[BOOTSTRAP] No existing admins found');
-  } else {
-    console.log('[BOOTSTRAP] Non-production mode - allowing bootstrap');
-  }
+  // Allow bootstrap for bootstrap email/username regardless of mode
+  // This ensures initial root account creation works in production
+  console.log('[BOOTSTRAP] Bootstrap credentials match, proceeding with account creation');
 
   // Look up or create account using raw SQL to bypass RLS
   console.log('[BOOTSTRAP] Looking up existing account...');
