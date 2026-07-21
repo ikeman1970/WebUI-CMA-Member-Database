@@ -15,18 +15,26 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
   const bootstrapUsername = process.env.BOOTSTRAP_ROOT_USERNAME ?? 'root';
   const bootstrapPassword = process.env.BOOTSTRAP_ROOT_PASSWORD;
 
+  console.log('[BOOTSTRAP] Email env:', bootstrapEmail ? 'set' : 'NOT SET');
+  console.log('[BOOTSTRAP] Password env:', bootstrapPassword ? 'set' : 'NOT SET');
+
   if (!bootstrapEmail || !bootstrapPassword) {
+    console.log('[BOOTSTRAP] Missing bootstrap config, returning null');
     return null;
   }
 
   const identifierMatches = usernameOrEmail === bootstrapEmail || usernameOrEmail === bootstrapUsername;
+  console.log('[BOOTSTRAP] Identifier match:', identifierMatches, `(input: ${usernameOrEmail}, email: ${bootstrapEmail}, username: ${bootstrapUsername})`);
+  
   if (!identifierMatches || password !== bootstrapPassword) {
+    console.log('[BOOTSTRAP] Credentials do not match, returning null');
     return null;
   }
 
   // For production, check if admin accounts exist and block bootstrap
   // For dev/test (NODE_ENV !== 'production'), allow bootstrap anytime for testing
   if (process.env.NODE_ENV === 'production') {
+    console.log('[BOOTSTRAP] Production mode - checking for existing admins');
     const existingAdmins = await prisma.$queryRaw`
       SELECT id FROM app."Account" 
       WHERE "role" IN ('root', 'superuser', 'admin')
@@ -34,11 +42,16 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
     ` as any[];
 
     if (existingAdmins?.length > 0) {
+      console.log('[BOOTSTRAP] Admin already exists, blocking bootstrap');
       return null;
     }
+    console.log('[BOOTSTRAP] No existing admins found');
+  } else {
+    console.log('[BOOTSTRAP] Non-production mode - allowing bootstrap');
   }
 
   // Look up or create account using raw SQL to bypass RLS
+  console.log('[BOOTSTRAP] Looking up existing account...');
   const existingAccounts = await prisma.$queryRaw`
     SELECT * FROM app."Account" 
     WHERE "email" = ${bootstrapEmail} OR "username" = ${bootstrapUsername}
@@ -46,9 +59,11 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
   ` as any[];
   
   let account = existingAccounts?.[0];
+  console.log('[BOOTSTRAP] Existing account:', account ? account.id : 'None');
 
   if (account) {
     // Update existing account
+    console.log('[BOOTSTRAP] Updating existing account');
     await prisma.$executeRawUnsafe(
       `UPDATE app."Account" SET "role" = ?, "accountType" = ?, "scopeType" = ?, "type" = ?, "mustChangePassword" = ?, "isDisabled" = ? WHERE "id" = ?`,
       'root',
@@ -62,6 +77,7 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
   } else {
     // Create new account using raw SQL to bypass RLS
     const newId = require('crypto').randomUUID();
+    console.log('[BOOTSTRAP] Creating new account with ID:', newId);
     await prisma.$executeRawUnsafe(
       `INSERT INTO app."Account" (id, email, username, role, "accountType", "scopeType", "type", "mustChangePassword", "isDisabled", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       newId,
@@ -77,10 +93,13 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
       new Date()
     );
     account = { id: newId, email: bootstrapEmail, username: bootstrapUsername };
+    console.log('[BOOTSTRAP] New account created');
   }
 
   // Ensure Supabase auth user exists
+  console.log('[BOOTSTRAP] Creating/updating Supabase auth user');
   await ensureBootstrapAuthUser(bootstrapEmail, bootstrapPassword);
+  console.log('[BOOTSTRAP] Supabase auth user ready');
   
   return account;
 }
@@ -164,94 +183,131 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ message: 'Missing username/email or password.' });
   }
 
-  // First, try to authenticate with Supabase
-  const supabase = createSupabaseServerClient();
-  
-  // Attempt login with provided credentials - this will fail for new bootstrap root
-  let supabaseAuth = await supabase.auth.signInWithPassword({
-    email: usernameOrEmail,
-    password
-  });
+  let supabaseAuth: any;
 
-  // If Supabase auth fails, try bootstrap logic
-  if (supabaseAuth.error) {
-    const bootstrapAccount = await bootstrapRootIfEligible(usernameOrEmail, password);
+  try {
+    // First, try to authenticate with Supabase
+    const supabase = createSupabaseServerClient();
     
-    if (bootstrapAccount?.email) {
-      // Bootstrap account created, set up auth user
-      await ensureBootstrapAuthUser(bootstrapAccount.email, password);
-      
-      // Now retry Supabase auth
-      supabaseAuth = await supabase.auth.signInWithPassword({
-        email: bootstrapAccount.email,
-        password
-      });
-    }
-  }
+    console.log('[LOGIN] Attempting auth with:', usernameOrEmail);
+    
+    // Attempt login with provided credentials - this will fail for new bootstrap root
+    supabaseAuth = await supabase.auth.signInWithPassword({
+      email: usernameOrEmail,
+      password
+    });
 
-  if (supabaseAuth.error || !supabaseAuth.data.session?.access_token) {
-    return res.status(401).json({ message: supabaseAuth.error?.message ?? 'Invalid credentials.' });
+    console.log('[LOGIN] Initial auth result:', supabaseAuth.error ? `Error: ${supabaseAuth.error.message}` : 'Success');
+
+    // If Supabase auth fails, try bootstrap logic
+    if (supabaseAuth.error) {
+      console.log('[LOGIN] Auth failed, attempting bootstrap...');
+      const bootstrapAccount = await bootstrapRootIfEligible(usernameOrEmail, password);
+      
+      console.log('[LOGIN] Bootstrap result:', bootstrapAccount ? `Account created: ${bootstrapAccount.id}` : 'Not eligible for bootstrap');
+      
+      if (bootstrapAccount?.email) {
+        // Bootstrap account created, set up auth user
+        console.log('[LOGIN] Ensuring Supabase auth user exists...');
+        await ensureBootstrapAuthUser(bootstrapAccount.email, password);
+        
+        console.log('[LOGIN] Retrying Supabase auth after bootstrap...');
+        // Now retry Supabase auth
+        supabaseAuth = await supabase.auth.signInWithPassword({
+          email: bootstrapAccount.email,
+          password
+        });
+        
+        console.log('[LOGIN] Retry result:', supabaseAuth.error ? `Error: ${supabaseAuth.error.message}` : 'Success');
+      }
+    }
+
+    if (supabaseAuth.error || !supabaseAuth.data.session?.access_token) {
+      console.log('[LOGIN] Final auth failed:', supabaseAuth.error?.message);
+      return res.status(401).json({ message: supabaseAuth.error?.message ?? 'Invalid credentials.' });
+    }
+    
+    console.log('[LOGIN] Supabase auth succeeded');
+  } catch (error) {
+    console.error('[LOGIN ERROR]', error);
+    return res.status(500).json({ message: 'Login error: ' + (error instanceof Error ? error.message : String(error)) });
   }
 
   // Supabase auth successful - now look up the CMA Account
-  const supabaseUser = supabaseAuth.data.user;
-  if (!supabaseUser?.id) {
-    return res.status(401).json({ message: 'Unable to verify auth.' });
-  }
+  try {
+    const supabaseUser = supabaseAuth.data.user;
+    if (!supabaseUser?.id) {
+      console.log('[LOGIN] No Supabase user ID');
+      return res.status(401).json({ message: 'Unable to verify auth.' });
+    }
 
-  // Query Account by email or username - bypassing RLS for login (use raw SQL)
-  const accounts = await prisma.$queryRaw`
-    SELECT * FROM app."Account" 
-    WHERE "email" = ${supabaseUser.email} OR "username" = ${usernameOrEmail}
-    LIMIT 1
-  ` as any[];
-  const account = accounts?.[0] || null;
+    console.log('[LOGIN] Supabase user ID:', supabaseUser.id, 'Email:', supabaseUser.email);
 
-  if (!account) {
-    return res.status(401).json({ message: 'Account not found.' });
-  }
+    // Query Account by email or username - bypassing RLS for login (use raw SQL)
+    console.log('[LOGIN] Looking up Account record...');
+    const accounts = await prisma.$queryRaw`
+      SELECT * FROM app."Account" 
+      WHERE "email" = ${supabaseUser.email} OR "username" = ${usernameOrEmail}
+      LIMIT 1
+    ` as any[];
+    const account = accounts?.[0] || null;
 
-  // Now set RLS context with the correct Account ID
-  await setRLSContext(account.id);
+    console.log('[LOGIN] Account lookup result:', account ? `Found: ${account.id}` : 'Not found');
 
-  if (account.isDisabled) {
-    return res.status(403).json({ message: 'Account is disabled. Contact an administrator.' });
-  }
+    if (!account) {
+      return res.status(401).json({ message: 'Account not found.' });
+    }
 
-  if (account.mustChangePassword) {
-    return res.status(403).json({
-      message: 'Password setup is required before sign-in. Use your invite link to set a password.',
-      requiresPasswordSetup: true,
-      passwordSetupPath: '/set-password'
+    // Now set RLS context with the correct Account ID
+    console.log('[LOGIN] Setting RLS context...');
+    await setRLSContext(account.id);
+    console.log('[LOGIN] RLS context set');
+
+    if (account.isDisabled) {
+      return res.status(403).json({ message: 'Account is disabled. Contact an administrator.' });
+    }
+
+    if (account.mustChangePassword) {
+      return res.status(403).json({
+        message: 'Password setup is required before sign-in. Use your invite link to set a password.',
+        requiresPasswordSetup: true,
+        passwordSetupPath: '/set-password'
+      });
+    }
+
+    const accessToken = supabaseAuth.data.session.access_token;
+    const refreshToken = supabaseAuth.data.session.refresh_token ?? '';
+    const maxAge = 60 * 60 * 24;
+
+    console.log('[LOGIN] Setting auth cookies');
+    res.setHeader('Set-Cookie', [
+      buildCookie(SUPABASE_ACCESS_TOKEN_COOKIE, accessToken, maxAge),
+      buildCookie(SUPABASE_REFRESH_TOKEN_COOKIE, refreshToken, maxAge * 30)
+    ]);
+
+    console.log('[LOGIN] Updating lastLoginAt');
+    await prisma.account.update({
+      where: { id: account.id },
+      data: { lastLoginAt: new Date() }
     });
+
+    console.log('[LOGIN] Success - returning account');
+    return res.status(200).json({
+      id: account.id,
+      email: account.email,
+      username: account.username,
+      role: account.role,
+      accountType: account.accountType,
+      scopeType: account.scopeType,
+      type: account.type,
+      themePreference: account.themePreference,
+      chapterId: account.chapterId,
+      orgUnitId: account.orgUnitId,
+      personId: account.personId,
+      mustChangePassword: account.mustChangePassword
+    });
+  } catch (error) {
+    console.error('[LOGIN ACCOUNT LOOKUP ERROR]', error);
+    return res.status(500).json({ message: 'Account lookup error: ' + (error instanceof Error ? error.message : String(error)) });
   }
-
-  const accessToken = supabaseAuth.data.session.access_token;
-  const refreshToken = supabaseAuth.data.session.refresh_token ?? '';
-  const maxAge = 60 * 60 * 24;
-
-  res.setHeader('Set-Cookie', [
-    buildCookie(SUPABASE_ACCESS_TOKEN_COOKIE, accessToken, maxAge),
-    buildCookie(SUPABASE_REFRESH_TOKEN_COOKIE, refreshToken, maxAge * 30)
-  ]);
-
-  await prisma.account.update({
-    where: { id: account.id },
-    data: { lastLoginAt: new Date() }
-  });
-
-  return res.status(200).json({
-    id: account.id,
-    email: account.email,
-    username: account.username,
-    role: account.role,
-    accountType: account.accountType,
-    scopeType: account.scopeType,
-    type: account.type,
-    themePreference: account.themePreference,
-    chapterId: account.chapterId,
-    orgUnitId: account.orgUnitId,
-    personId: account.personId,
-    mustChangePassword: account.mustChangePassword
-  });
 }
