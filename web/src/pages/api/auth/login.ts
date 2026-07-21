@@ -39,10 +39,11 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
 
     // Create new account using raw SQL
     const newId = require('crypto').randomUUID();
+    const now = new Date().toISOString();
     console.log('[BOOTSTRAP] New account ID:', newId);
     
     await prisma.$executeRawUnsafe(
-      `INSERT INTO app."Account" (id, email, username, role, "accountType", "scopeType", "type", "mustChangePassword", "isDisabled", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO app."Account" (id, email, username, role, "accountType", "scopeType", "type", "mustChangePassword", "isDisabled", "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       newId,
       bootstrapEmail,
       bootstrapUsername,
@@ -52,8 +53,8 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
       'admin',
       false,
       false,
-      new Date(),
-      new Date()
+      now,
+      now
     );
     
     console.log('[BOOTSTRAP] Account created successfully');
@@ -228,10 +229,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!account && supabaseUser.email === process.env.BOOTSTRAP_ROOT_EMAIL) {
       console.log('[LOGIN] Account not found but Supabase user exists for bootstrap email - creating Account record');
       const newId = require('crypto').randomUUID();
+      const now = new Date().toISOString();
       
       try {
         await prisma.$executeRawUnsafe(
-          `INSERT INTO app."Account" (id, email, username, role, "accountType", "scopeType", "type", "mustChangePassword", "isDisabled", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO app."Account" (id, email, username, role, "accountType", "scopeType", "type", "mustChangePassword", "isDisabled", "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           newId,
           process.env.BOOTSTRAP_ROOT_EMAIL,
           process.env.BOOTSTRAP_ROOT_USERNAME ?? 'root',
@@ -241,8 +243,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           'admin',
           false,
           false,
-          new Date(),
-          new Date()
+          now,
+          now
         );
         console.log('[LOGIN] Account record created for bootstrap email');
         account = { 
