@@ -134,6 +134,15 @@ export default function ChapterDirectoryPrintPage({ chapter, members }: { chapte
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const chapterId = context.params?.id as string;
+  const cookies = parseCookies(context.req.headers.cookie ?? null);
+  const accessToken = cookies[ACCESS_TOKEN_COOKIE];
+
+  // Require auth to prevent build-time RLS failures
+  if (!accessToken) {
+    return {
+      notFound: true
+    };
+  }
 
   const chapter = await prisma.chapter.findUnique({
     where: { id: chapterId }
@@ -142,18 +151,6 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   if (!chapter) {
     return {
       notFound: true
-    };
-  }
-
-  const cookies = parseCookies(context.req.headers.cookie ?? null);
-  const accessToken = cookies[ACCESS_TOKEN_COOKIE];
-
-  if (!accessToken) {
-    return {
-      redirect: {
-        destination: '/',
-        permanent: false
-      }
     };
   }
 

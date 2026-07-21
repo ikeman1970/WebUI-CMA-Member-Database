@@ -488,6 +488,11 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
         await setRLSContext(account.id);
       }
     }
+  } else {
+    // No auth during build-time or unauthenticated requests
+    return {
+      notFound: true
+    };
   }
 
   const [chapter, officers, members] = await Promise.all([

@@ -376,6 +376,12 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
         await setRLSContext(account.id);
       }
     }
+  } else {
+    // No auth during build-time or unauthenticated requests
+    // Return 404 to avoid RLS policy failures
+    return {
+      notFound: true
+    };
   }
 
   const member = await prisma.person.findUnique({
