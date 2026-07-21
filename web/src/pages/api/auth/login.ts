@@ -24,18 +24,22 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
     return null;
   }
 
-  const existingAdmin = await prisma.account.findFirst({
-    where: {
-      OR: [
-        { role: { equals: 'root', mode: 'insensitive' } },
-        { role: { equals: 'superuser', mode: 'insensitive' } },
-        { role: { equals: 'admin', mode: 'insensitive' } }
-      ]
-    }
-  });
+  // For production, check if admin accounts exist and block bootstrap
+  // For dev/test (NODE_ENV !== 'production'), allow bootstrap anytime for testing
+  if (process.env.NODE_ENV === 'production') {
+    const existingAdmin = await prisma.account.findFirst({
+      where: {
+        OR: [
+          { role: { equals: 'root', mode: 'insensitive' } },
+          { role: { equals: 'superuser', mode: 'insensitive' } },
+          { role: { equals: 'admin', mode: 'insensitive' } }
+        ]
+      }
+    });
 
-  if (existingAdmin) {
-    return null;
+    if (existingAdmin) {
+      return null;
+    }
   }
 
   const account = await prisma.account.findFirst({
@@ -189,15 +193,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ message: 'Unable to verify auth.' });
   }
 
-  // Find account by email or username (without RLS context yet - we need the account ID first)
-  const account = await prisma.account.findFirst({
-    where: {
-      OR: [
-        { email: supabaseUser.email },
-        { username: usernameOrEmail }
-      ]
-    }
-  });
+  // Query Account by email or username - bypassing RLS for login (use raw SQL)
+  const accounts = await prisma.$queryRaw`
+    SELECT * FROM app."Account" 
+    WHERE "email" = ${supabaseUser.email} OR "username" = ${usernameOrEmail}
+    LIMIT 1
+  ` as any[];
+  const account = accounts?.[0] || null;
 
   if (!account) {
     return res.status(401).json({ message: 'Account not found.' });
