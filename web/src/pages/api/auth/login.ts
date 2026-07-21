@@ -183,15 +183,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ message: supabaseAuth.error?.message ?? 'Invalid credentials.' });
   }
 
-  // Supabase auth successful - now look up the CMA Account with RLS context
+  // Supabase auth successful - now look up the CMA Account
   const supabaseUser = supabaseAuth.data.user;
   if (!supabaseUser?.id) {
     return res.status(401).json({ message: 'Unable to verify auth.' });
   }
 
-  // Set RLS context for this authenticated user to query Account table
-  await setRLSContext(supabaseUser.id);
-
+  // Find account by email or username (without RLS context yet - we need the account ID first)
   const account = await prisma.account.findFirst({
     where: {
       OR: [
@@ -200,6 +198,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ]
     }
   });
+
+  if (!account) {
+    return res.status(401).json({ message: 'Account not found.' });
+  }
+
+  // Now set RLS context with the correct Account ID
+  await setRLSContext(account.id);
 
   if (!account) {
     return res.status(401).json({ message: 'Account not found.' });
