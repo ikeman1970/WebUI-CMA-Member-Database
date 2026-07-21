@@ -11,58 +11,36 @@ function buildCookie(name: string, value: string, maxAge: number) {
 }
 
 async function bootstrapRootIfEligible(usernameOrEmail: string, password: string) {
-  const bootstrapEmail = process.env.BOOTSTRAP_ROOT_EMAIL;
-  const bootstrapUsername = process.env.BOOTSTRAP_ROOT_USERNAME ?? 'root';
-  const bootstrapPassword = process.env.BOOTSTRAP_ROOT_PASSWORD;
+  try {
+    const bootstrapEmail = process.env.BOOTSTRAP_ROOT_EMAIL;
+    const bootstrapUsername = process.env.BOOTSTRAP_ROOT_USERNAME ?? 'root';
+    const bootstrapPassword = process.env.BOOTSTRAP_ROOT_PASSWORD;
 
-  console.log('[BOOTSTRAP] Email env:', bootstrapEmail ? 'set' : 'NOT SET');
-  console.log('[BOOTSTRAP] Password env:', bootstrapPassword ? 'set' : 'NOT SET');
+    console.log('[BOOTSTRAP] Starting bootstrap check');
+    console.log('[BOOTSTRAP] Config - Email:', bootstrapEmail, 'Username:', bootstrapUsername, 'PasswordSet:', !!bootstrapPassword);
 
-  if (!bootstrapEmail || !bootstrapPassword) {
-    console.log('[BOOTSTRAP] Missing bootstrap config, returning null');
-    return null;
-  }
+    if (!bootstrapEmail || !bootstrapPassword) {
+      console.log('[BOOTSTRAP] Missing config');
+      return null;
+    }
 
-  const identifierMatches = usernameOrEmail === bootstrapEmail || usernameOrEmail === bootstrapUsername;
-  console.log('[BOOTSTRAP] Identifier match:', identifierMatches, `(input: ${usernameOrEmail}, email: ${bootstrapEmail}, username: ${bootstrapUsername})`);
-  
-  if (!identifierMatches || password !== bootstrapPassword) {
-    console.log('[BOOTSTRAP] Credentials do not match, returning null');
-    return null;
-  }
+    const emailMatch = usernameOrEmail === bootstrapEmail;
+    const usernameMatch = usernameOrEmail === bootstrapUsername;
+    const passwordMatch = password === bootstrapPassword;
 
-  // Allow bootstrap for bootstrap email/username regardless of mode
-  // This ensures initial root account creation works in production
-  console.log('[BOOTSTRAP] Bootstrap credentials match, proceeding with account creation');
+    console.log('[BOOTSTRAP] Matching - Email:', emailMatch, 'Username:', usernameMatch, 'Password:', passwordMatch);
 
-  // Look up or create account using raw SQL to bypass RLS
-  console.log('[BOOTSTRAP] Looking up existing account...');
-  const existingAccounts = await prisma.$queryRaw`
-    SELECT * FROM app."Account" 
-    WHERE "email" = ${bootstrapEmail} OR "username" = ${bootstrapUsername}
-    LIMIT 1
-  ` as any[];
-  
-  let account = existingAccounts?.[0];
-  console.log('[BOOTSTRAP] Existing account:', account ? account.id : 'None');
+    if (!(emailMatch || usernameMatch) || !passwordMatch) {
+      console.log('[BOOTSTRAP] Credentials do not match');
+      return null;
+    }
 
-  if (account) {
-    // Update existing account
-    console.log('[BOOTSTRAP] Updating existing account');
-    await prisma.$executeRawUnsafe(
-      `UPDATE app."Account" SET "role" = ?, "accountType" = ?, "scopeType" = ?, "type" = ?, "mustChangePassword" = ?, "isDisabled" = ? WHERE "id" = ?`,
-      'root',
-      'internal',
-      'global',
-      'admin',
-      false,
-      false,
-      account.id
-    );
-  } else {
-    // Create new account using raw SQL to bypass RLS
+    console.log('[BOOTSTRAP] Credentials match! Creating account...');
+
+    // Create new account using raw SQL
     const newId = require('crypto').randomUUID();
-    console.log('[BOOTSTRAP] Creating new account with ID:', newId);
+    console.log('[BOOTSTRAP] New account ID:', newId);
+    
     await prisma.$executeRawUnsafe(
       `INSERT INTO app."Account" (id, email, username, role, "accountType", "scopeType", "type", "mustChangePassword", "isDisabled", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       newId,
@@ -77,16 +55,19 @@ async function bootstrapRootIfEligible(usernameOrEmail: string, password: string
       new Date(),
       new Date()
     );
-    account = { id: newId, email: bootstrapEmail, username: bootstrapUsername };
-    console.log('[BOOTSTRAP] New account created');
+    
+    console.log('[BOOTSTRAP] Account created successfully');
+    
+    // Create Supabase auth user
+    console.log('[BOOTSTRAP] Creating Supabase auth user...');
+    await ensureBootstrapAuthUser(bootstrapEmail, bootstrapPassword);
+    console.log('[BOOTSTRAP] Supabase auth user created');
+    
+    return { id: newId, email: bootstrapEmail, username: bootstrapUsername };
+  } catch (error) {
+    console.error('[BOOTSTRAP ERROR]', error instanceof Error ? error.message : String(error));
+    throw error;
   }
-
-  // Ensure Supabase auth user exists
-  console.log('[BOOTSTRAP] Creating/updating Supabase auth user');
-  await ensureBootstrapAuthUser(bootstrapEmail, bootstrapPassword);
-  console.log('[BOOTSTRAP] Supabase auth user ready');
-  
-  return account;
 }
 
 async function ensureBootstrapAuthUser(email: string, password: string) {
@@ -186,7 +167,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // If Supabase auth fails, try bootstrap logic
     if (supabaseAuth.error) {
-      console.log('[LOGIN] Auth failed, attempting bootstrap...');
+      console.log('[LOGIN] Auth failed with error:', supabaseAuth.error.message);
+      console.log('[LOGIN] Attempting bootstrap...');
+      console.log('[LOGIN] BOOTSTRAP_ROOT_EMAIL env:', process.env.BOOTSTRAP_ROOT_EMAIL);
+      console.log('[LOGIN] Input credentials:', { usernameOrEmail, passwordMatch: password === process.env.BOOTSTRAP_ROOT_PASSWORD });
+      
       const bootstrapAccount = await bootstrapRootIfEligible(usernameOrEmail, password);
       
       console.log('[LOGIN] Bootstrap result:', bootstrapAccount ? `Account created: ${bootstrapAccount.id}` : 'Not eligible for bootstrap');
